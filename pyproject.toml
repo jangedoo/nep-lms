@@ -7,11 +7,15 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-torch = "^2.4.0"
+torch = [
+    { version = "2.2.*", markers = "sys_platform == \"darwin\" and platform_machine == \"x86_64\"" },
+    { version = "^2.3", markers = "sys_platform != \"darwin\" and extra == \"cuda\"", source = "pytorch-cuda" },
+    { version = "^2.3", markers = "((sys_platform == \"darwin\" and platform_machine != \"x86_64\") or sys_platform != \"darwin\") and extra != \"cuda\"", source = "pytorch-cpu" },
+]
+sentence-transformers = "^4.1.0"
 datasets = "^2.21.0"
 transformers = "^4.44.2"
 accelerate = "^0.33.0"
-sentence-transformers = "^3.0.1"
 lets-plot = "^4.4.1"
 easyknn = "^0.5.0"
 
@@ -24,3 +28,18 @@ flake8 = "^7.1.1"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+# Declare two extras so that Poetry knows when to pull cpu vs. cuda
+[tool.poetry.extras]
+cpu = ["torch"]
+cuda = ["torch"]
+
+[[tool.poetry.source]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
+[[tool.poetry.source]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
+priority = "explicit"
