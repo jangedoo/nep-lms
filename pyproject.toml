@@ -19,6 +19,7 @@ accelerate = "^0.33.0"
 lets-plot = "^4.4.1"
 easyknn = "^0.5.0"
 python-dotenv = "^1.1.1"
+click = "^8.2.1"
 
 
 [tool.poetry.group.dev.dependencies]
