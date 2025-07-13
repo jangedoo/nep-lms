@@ -3,6 +3,7 @@ notebooks/
 _notebooks/
 data/
 models/
+experiments/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
