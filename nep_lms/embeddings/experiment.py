@@ -38,6 +38,12 @@ def en_ne_parallel_corpus_loader():
     return ds
 
 
+def paraphrase_loader():
+    # this ds already has train, test, valid splits
+    ds = datasets.load_dataset("jangedoo/paraphrase-nepali")
+    return ds
+
+
 def create_ir_evaluator_from_parallel_corpus(
     ds: datasets.Dataset, query_col: str, doc_col: str, evaluator_name: str = ""
 ):
@@ -64,6 +70,7 @@ class EmbeddingExperiment:
         self.ds_name_to_loader = {
             "nepali_news": nepali_news_loader,
             "en_ne_parallel_corpus": en_ne_parallel_corpus_loader,
+            "paraphrase": paraphrase_loader,
         }
         self._datasets: dict[str, datasets.DatasetDict] = {}
         self._evaluator: SentenceEvaluator = None
@@ -82,6 +89,10 @@ class EmbeddingExperiment:
     @property
     def en_ne_parallel_corpus_ds(self):
         return self.get_dataset("en_ne_parallel_corpus")
+
+    @property
+    def paraphrase_ds(self):
+        return self.get_dataset("paraphrase")
 
     def _get_evaluator(self, max_rows: int | None = None):
         valid_ds = self.nepali_news_ds["valid"]
@@ -165,9 +176,9 @@ class EmbeddingExperiment:
         all_model_metrics_df: pd.DataFrame | None = None,
         main_metrics: list[str] | None = None,
     ):
-        from lets_plot import *
+        import lets_plot as lp
 
-        LetsPlot.setup_html()
+        lp.LetsPlot.setup_html()
         all_model_metrics_df = (
             all_model_metrics_df
             if all_model_metrics_df is not None
@@ -184,13 +195,13 @@ class EmbeddingExperiment:
             "multi_lang_ir_cosine_recall@10",
         ]
         fig = (
-            ggplot(
+            lp.ggplot(
                 all_model_metrics_df.query("metric in @main_metrics"),
-                aes("model", "value", fill="model"),
+                lp.aes("model", "value", fill="model"),
             )
-            + geom_bar(stat="identity")
-            + geom_text(aes(label="value"), label_format=".2f")
-            + facet_wrap("metric", ncol=2)
-            + theme_minimal2()
+            + lp.geom_bar(stat="identity")
+            + lp.geom_text(lp.aes(label="value"), label_format=".2f")
+            + lp.facet_wrap("metric", ncol=2)
+            + lp.theme_minimal2()
         )
         return fig
