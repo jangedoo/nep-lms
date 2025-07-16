@@ -108,7 +108,7 @@ class BaseSTEmbeddingVariant:
         epochs: float = 3,
         max_steps: int = -1,
         batch_size: int = 64,
-        lr: float = 2e-6,
+        lr: float = 2e-5,
         early_stop=True,
         early_stop_patience=3,
         push_to_hub: bool = False,
@@ -147,7 +147,7 @@ class BaseSTEmbeddingVariant:
         model_id = hub_model_id or self.hub_model_id
         if model_id is None:
             raise ValueError("hub_model_id is required to push to hub")
-        self.model.push_to_hub(repo_id=model_id)
+        self.model.push_to_hub(repo_id=model_id, exist_ok=True)
 
 
 class MiniLML6V3Variant(BaseSTEmbeddingVariant):
@@ -155,14 +155,18 @@ class MiniLML6V3Variant(BaseSTEmbeddingVariant):
         super().__init__(hub_model_id="jangedoo/all-MiniLM-L6-v3-nepali")
 
     def get_model(self) -> SentenceTransformer:
-        return SentenceTransformer("jangedoo/all-MiniLM-L6-v2-nepali")
+        return SentenceTransformer("jangedoo/all-MiniLM-L6-v3-nepali")
 
     def get_loss(self, model: SentenceTransformer) -> Callable | dict[str, Callable]:
         loss = {
-            "title_excerpt": losses.MultipleNegativesSymmetricRankingLoss(model),
-            "with_summary": losses.MultipleNegativesSymmetricRankingLoss(model),
-            "ne_en": losses.MultipleNegativesSymmetricRankingLoss(model),
-            "excerpt_paraphrase": losses.MultipleNegativesSymmetricRankingLoss(model),
+            # "title_excerpt": losses.MultipleNegativesSymmetricRankingLoss(model),
+            # "ne_en": losses.MultipleNegativesSymmetricRankingLoss(model),
+            # "excerpt_paraphrase": losses.MultipleNegativesSymmetricRankingLoss(model),
+            "nepali_triplets": losses.TripletLoss(
+                model,
+                distance_metric=losses.TripletDistanceMetric.COSINE,
+                triplet_margin=0.2,
+            ),
         }
         return loss
 
@@ -176,29 +180,6 @@ class MiniLML6V3Variant(BaseSTEmbeddingVariant):
             ["title", "excerpt"]
         )
 
-        def make_pairs_with_summary(rows):
-            titles = rows["title"]
-            excerpts = rows["excerpt"]
-            summary_points = [
-                summaries[0] if summaries else excerpts[row_idx]
-                for row_idx, summaries in enumerate(rows["summary_points"])
-            ]
-
-            first_sentences = excerpts
-            second_sentences = summary_points
-            return {
-                "first_sentences": first_sentences,
-                "second_sentences": second_sentences,
-            }
-
-        with_summary_ds = self.experiment.nepali_news_ds.select_columns(
-            ["title", "excerpt", "summary_points"]
-        ).map(
-            make_pairs_with_summary,
-            remove_columns=["title", "excerpt", "summary_points"],
-            batch_size=128,
-            batched=True,
-        )
         ne_en_ds = self.experiment.en_ne_parallel_corpus_ds.select_columns(
             ["title", "translation"]
         )
@@ -206,23 +187,27 @@ class MiniLML6V3Variant(BaseSTEmbeddingVariant):
             lambda row: row["label"] == 1
         ).select_columns(["sentence1", "sentence2"])
 
+        triplets_ds = self.experiment.nepali_triplets_ds.select_columns(
+            ["sentence", "positive_sentence", "negative_sentence"]
+        )
+
         train_ds = {
-            "title_excerpt": title_excerpt_ds["train"],
-            "with_summary": with_summary_ds["train"],
-            "ne_en": ne_en_ds["train"],
-            "excerpt_paraphrase": paraphrase_ds["train"],
+            # "title_excerpt": title_excerpt_ds["train"],
+            # "ne_en": ne_en_ds["train"],
+            # "excerpt_paraphrase": paraphrase_ds["train"],
+            "nepali_triplets": triplets_ds["train"],
         }
 
         eval_ds = {
-            "title_excerpt": title_excerpt_ds["test"],
-            "with_summary": with_summary_ds["test"],
-            "ne_en": ne_en_ds["test"],
-            "excerpt_paraphrase": paraphrase_ds["test"],
+            # "title_excerpt": title_excerpt_ds["test"],
+            # "ne_en": ne_en_ds["test"],
+            # "excerpt_paraphrase": paraphrase_ds["test"],
+            "nepali_triplets": triplets_ds["test"],
         }
         return train_ds, eval_ds
 
     def get_training_args(self):
         args = super().get_training_args()
-        args.metric_for_best_model = "eval_excerpt_paraphrase_loss"
+        args.metric_for_best_model = "eval_nepali_triplets_loss"
         args.greater_is_better = False
         return args

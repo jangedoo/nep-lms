@@ -9,6 +9,7 @@ from sentence_transformers.evaluation import (
     SequentialEvaluator,
     SentenceEvaluator,
     TranslationEvaluator,
+    TripletEvaluator,
 )
 import pandas as pd
 import logging
@@ -44,6 +45,12 @@ def paraphrase_loader():
     return ds
 
 
+def nepali_triplets_loader():
+    ds = datasets.load_dataset("jangedoo/nepali-triplets")
+    # this ds already has train, test, valid splits
+    return ds
+
+
 def create_ir_evaluator_from_parallel_corpus(
     ds: datasets.Dataset, query_col: str, doc_col: str, evaluator_name: str = ""
 ):
@@ -71,6 +78,7 @@ class EmbeddingExperiment:
             "nepali_news": nepali_news_loader,
             "en_ne_parallel_corpus": en_ne_parallel_corpus_loader,
             "paraphrase": paraphrase_loader,
+            "nepali_triplets": nepali_triplets_loader,
         }
         self._datasets: dict[str, datasets.DatasetDict] = {}
         self._evaluator: SentenceEvaluator = None
@@ -93,6 +101,10 @@ class EmbeddingExperiment:
     @property
     def paraphrase_ds(self):
         return self.get_dataset("paraphrase")
+
+    @property
+    def nepali_triplets_ds(self):
+        return self.get_dataset("nepali_triplets")
 
     def _get_evaluator(self, max_rows: int | None = None):
         valid_ds = self.nepali_news_ds["valid"]
@@ -128,12 +140,26 @@ class EmbeddingExperiment:
             name="translation",
         )
 
+        # triplets evaluator
+        valid_ds = self.nepali_triplets_ds["valid"]
+        if max_rows:
+            valid_ds = valid_ds.select(range(max_rows))
+        triplets_evaluator = TripletEvaluator(
+            anchors=valid_ds["sentence"],
+            positives=valid_ds["positive_sentence"],
+            negatives=valid_ds["negative_sentence"],
+            name="nepali_triplets",
+            main_similarity_function="cosine",
+            margin=0.1,
+        )
+
         evaluator = SequentialEvaluator(
             [
                 multi_lang_ir_evaluator,
                 en_only_ir_evalautor,
                 ne_only_ir_evalautor,
                 translation_evaluator,
+                triplets_evaluator,
             ]
         )
         return evaluator
@@ -193,6 +219,7 @@ class EmbeddingExperiment:
             "en_ir_cosine_recall@10",
             "ne_ir_cosine_recall@10",
             "multi_lang_ir_cosine_recall@10",
+            "nepali_triplets_cosine_accuracy",
         ]
         fig = (
             lp.ggplot(
