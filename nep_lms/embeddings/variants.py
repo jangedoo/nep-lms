@@ -10,7 +10,6 @@ import datasets
 import transformers
 from nep_lms.embeddings.experiment import (
     EmbeddingExperiment,
-    split_ds_to_train_test_valid,
 )
 import pandas as pd
 
@@ -155,18 +154,20 @@ class MiniLML6V3Variant(BaseSTEmbeddingVariant):
         super().__init__(hub_model_id="jangedoo/all-MiniLM-L6-v3-nepali")
 
     def get_model(self) -> SentenceTransformer:
-        return SentenceTransformer("jangedoo/all-MiniLM-L6-v3-nepali")
+        return SentenceTransformer("jangedoo/all-MiniLM-L6-v2-nepali")
 
     def get_loss(self, model: SentenceTransformer) -> Callable | dict[str, Callable]:
         loss = {
             # "title_excerpt": losses.MultipleNegativesSymmetricRankingLoss(model),
             # "ne_en": losses.MultipleNegativesSymmetricRankingLoss(model),
             # "excerpt_paraphrase": losses.MultipleNegativesSymmetricRankingLoss(model),
-            "nepali_triplets": losses.TripletLoss(
-                model,
-                distance_metric=losses.TripletDistanceMetric.COSINE,
-                triplet_margin=0.2,
-            ),
+            # "nepali_triplets": losses.TripletLoss(
+            #     model,
+            #     distance_metric=losses.TripletDistanceMetric.COSINE,
+            #     triplet_margin=0.2,
+            # ),
+            # "stsb_en": losses.CosineSimilarityLoss(model),
+            "stsb_ne": losses.CoSENTLoss(model),
         }
         return loss
 
@@ -191,23 +192,53 @@ class MiniLML6V3Variant(BaseSTEmbeddingVariant):
             ["sentence", "positive_sentence", "negative_sentence"]
         )
 
+        # both nepali sentences
+        stsb_ne_pair_ds = self.experiment.nepali_stsb_ds.select_columns(
+            ["sentence1_ne", "sentence2_ne", "score"]
+        ).rename_columns({"sentence1_ne": "sentence1", "sentence2_ne": "sentence2"})
+
+        # first english and second nepali
+        stsb_en_ne_pair_ds = self.experiment.nepali_stsb_ds.select_columns(
+            ["sentence1", "sentence2_ne", "score"]
+        ).rename_columns({"sentence2_ne": "sentence2"})
+
+        # first nepali and second english
+        stsb_ne_en_pair_ds = self.experiment.nepali_stsb_ds.select_columns(
+            ["sentence1_ne", "sentence2", "score"]
+        ).rename_columns({"sentence1_ne": "sentence1"})
+
+        stsb_ds = datasets.DatasetDict(
+            {
+                split: datasets.concatenate_datasets(
+                    [
+                        stsb_ne_pair_ds[split],
+                        stsb_en_ne_pair_ds[split],
+                        stsb_ne_en_pair_ds[split],
+                    ]
+                )
+                for split in ["train", "test", "valid"]
+            }
+        )
+
         train_ds = {
             # "title_excerpt": title_excerpt_ds["train"],
             # "ne_en": ne_en_ds["train"],
             # "excerpt_paraphrase": paraphrase_ds["train"],
-            "nepali_triplets": triplets_ds["train"],
+            # "nepali_triplets": triplets_ds["train"],
+            "stsb_ne": stsb_ds["train"],
         }
 
         eval_ds = {
             # "title_excerpt": title_excerpt_ds["test"],
             # "ne_en": ne_en_ds["test"],
             # "excerpt_paraphrase": paraphrase_ds["test"],
-            "nepali_triplets": triplets_ds["test"],
+            # "nepali_triplets": triplets_ds["test"],
+            "stsb_ne": stsb_ds["test"],
         }
         return train_ds, eval_ds
 
     def get_training_args(self):
         args = super().get_training_args()
-        args.metric_for_best_model = "eval_nepali_triplets_loss"
+        args.metric_for_best_model = "eval_stsb_ne_loss"
         args.greater_is_better = False
         return args

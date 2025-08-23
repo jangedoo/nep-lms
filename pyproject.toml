@@ -13,13 +13,16 @@ torch = [
     { version = "^2.3", markers = "((sys_platform == \"darwin\" and platform_machine != \"x86_64\") or sys_platform != \"darwin\") and extra != \"cuda\"", source = "pytorch-cpu" },
 ]
 sentence-transformers = "^4.1.0"
-datasets = "^2.21.0"
-transformers = "^4.44.2"
-accelerate = "^1.8.1"
+datasets = "^4.0.0"
+transformers = {version = "^4.55.4"}
+accelerate = "^1.10.0"
 lets-plot = "^4.4.1"
 easyknn = "^0.5.0"
 python-dotenv = "^1.1.1"
 click = "^8.2.1"
+trl = "^0.21.0"
+peft = "^0.17.1"
+einops = "^0.8.1"
 
 
 [tool.poetry.group.dev.dependencies]
