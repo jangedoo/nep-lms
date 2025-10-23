@@ -8,8 +8,8 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
 torch = [
-    { version = "^2.6", markers = "sys_platform != \"darwin\" and extra == \"cuda\"", source = "pytorch-cuda" },
-    { version = "^2.6", markers = "extra != \"cuda\"", source = "pytorch-cpu" },
+    { version = "^2.6", markers = "sys_platform != \"darwin\"", source = "pytorch-cuda" },
+    { version = "^2.6", markers = "sys_platform == \"darwin\"", source = "pytorch-cpu" },
 ]
 sentence-transformers = "^4.1.0"
 datasets = "^4.0.0"
@@ -22,6 +22,7 @@ click = "^8.1.0"
 trl = "^0.21.0"
 peft = "^0.17.0"
 einops = "^0.8.1"
+unsloth = "^2025.10.9"
 
 
 [tool.poetry.group.dev.dependencies]
