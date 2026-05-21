@@ -5,13 +5,13 @@ from sentence_transformers import (
     SentenceTransformerTrainer,
     SentenceTransformerTrainingArguments,
 )
-from sentence_transformers import util, training_args, losses
+from sentence_transformers import losses
+from sentence_transformers.evaluation import SentenceEvaluator
 import datasets
 import transformers
 from nep_lms.embeddings.experiment import (
     EmbeddingExperiment,
 )
-import pandas as pd
 
 
 class BaseSTEmbeddingVariant:
@@ -21,8 +21,7 @@ class BaseSTEmbeddingVariant:
         self.hub_model_id = hub_model_id
         self._model: SentenceTransformer = None
         self._train_eval_ds: (
-            tuple[datasets.Dataset, datasets.Dataset]
-            | tuple[dict[str, datasets.Dataset], dict[str, datasets.Dataset]]
+            tuple[datasets.Dataset, datasets.Dataset] | tuple[dict[str, datasets.Dataset], dict[str, datasets.Dataset]]
         ) = None
         self._loss: Callable | dict[str, Callable] = None
 
@@ -65,10 +64,7 @@ class BaseSTEmbeddingVariant:
     @abc.abstractmethod
     def get_train__eval_ds(
         self,
-    ) -> (
-        tuple[datasets.Dataset, datasets.Dataset]
-        | tuple[dict[str, datasets.Dataset], dict[str, datasets.Dataset]]
-    ):
+    ) -> tuple[datasets.Dataset, datasets.Dataset] | tuple[dict[str, datasets.Dataset], dict[str, datasets.Dataset]]:
         pass
 
     def get_training_args(self):
@@ -76,14 +72,16 @@ class BaseSTEmbeddingVariant:
             output_dir=None,
             num_train_epochs=3,
             max_steps=-1,
-            per_device_train_batch_size=64,
+            per_device_train_batch_size=16,
+            gradient_accumulation_steps=4,
             learning_rate=2e-6,
             warmup_ratio=0.1,
-            fp16=util.get_device_name() != "cpu",
             save_strategy="steps",
             eval_strategy="steps",
             eval_steps=100,
             logging_steps=100,
+            save_total_limit=3,
+            gradient_checkpointing=True,
         )
 
     def get_trainer(
@@ -93,6 +91,7 @@ class BaseSTEmbeddingVariant:
         train_ds: datasets.Dataset | dict[str, datasets.Dataset],
         eval_ds: datasets.Dataset | dict[str, datasets.Dataset],
         loss: Callable | dict[str, Callable],
+        evaluator: SentenceEvaluator | None = None,
     ) -> SentenceTransformerTrainer:
         return SentenceTransformerTrainer(
             model=model,
@@ -100,6 +99,7 @@ class BaseSTEmbeddingVariant:
             train_dataset=train_ds,
             eval_dataset=eval_ds,
             loss=loss,
+            evaluator=evaluator,
         )
 
     def train(
@@ -107,7 +107,7 @@ class BaseSTEmbeddingVariant:
         epochs: float = 3,
         max_steps: int = -1,
         batch_size: int = 64,
-        lr: float = 2e-5,
+        lr: float = 2e-6,
         early_stop=True,
         early_stop_patience=3,
         push_to_hub: bool = False,
@@ -116,6 +116,7 @@ class BaseSTEmbeddingVariant:
         training_args.num_train_epochs = epochs
         training_args.max_steps = max_steps
         training_args.per_device_train_batch_size = batch_size
+        training_args.gradient_accumulation_steps = max(1, 64 // batch_size)
         training_args.learning_rate = lr
 
         if early_stop and training_args.metric_for_best_model is None:
@@ -127,13 +128,12 @@ class BaseSTEmbeddingVariant:
             train_ds=self.train_ds,
             eval_ds=self.eval_ds,
             loss=self.loss,
+            evaluator=self.experiment.evaluator,
         )
         if early_stop:
             training_args.load_best_model_at_end = True
             trainer.add_callback(
-                transformers.trainer_callback.EarlyStoppingCallback(
-                    early_stopping_patience=early_stop_patience
-                )
+                transformers.trainer_callback.EarlyStoppingCallback(early_stopping_patience=early_stop_patience)
             )
         trainer.train()
         if push_to_hub:
@@ -157,88 +157,76 @@ class MiniLML6V3Variant(BaseSTEmbeddingVariant):
         return SentenceTransformer("jangedoo/all-MiniLM-L6-v2-nepali")
 
     def get_loss(self, model: SentenceTransformer) -> Callable | dict[str, Callable]:
+        cosent_loss = losses.CoSENTLoss(model)
         loss = {
-            # "title_excerpt": losses.MultipleNegativesSymmetricRankingLoss(model),
-            # "ne_en": losses.MultipleNegativesSymmetricRankingLoss(model),
-            # "excerpt_paraphrase": losses.MultipleNegativesSymmetricRankingLoss(model),
-            # "nepali_triplets": losses.TripletLoss(
-            #     model,
-            #     distance_metric=losses.TripletDistanceMetric.COSINE,
-            #     triplet_margin=0.2,
-            # ),
-            # "stsb_en": losses.CosineSimilarityLoss(model),
-            "stsb_ne": losses.CoSENTLoss(model),
+            "title_excerpt": losses.MultipleNegativesSymmetricRankingLoss(model),
+            "ne_en": losses.MultipleNegativesSymmetricRankingLoss(model),
+            "excerpt_paraphrase": losses.MultipleNegativesSymmetricRankingLoss(model),
+            "nepali_triplets": losses.TripletLoss(
+                model,
+                distance_metric=losses.TripletDistanceMetric.COSINE,
+                triplet_margin=0.2,
+            ),
+            "stsb_en": losses.CosineSimilarityLoss(model),
+            "stsb_ne": cosent_loss,
+            "stsb_en_ne": cosent_loss,
+            "stsb_ne_en": cosent_loss,
         }
         return loss
 
     def get_train__eval_ds(
         self,
-    ) -> (
-        tuple[datasets.Dataset, datasets.Dataset]
-        | tuple[dict[str, datasets.Dataset], dict[str, datasets.Dataset]]
-    ):
-        title_excerpt_ds = self.experiment.nepali_news_ds.select_columns(
-            ["title", "excerpt"]
-        )
+    ) -> tuple[datasets.Dataset, datasets.Dataset] | tuple[dict[str, datasets.Dataset], dict[str, datasets.Dataset]]:
+        title_excerpt_ds = self.experiment.nepali_news_ds.select_columns(["title", "excerpt"])
 
-        ne_en_ds = self.experiment.en_ne_parallel_corpus_ds.select_columns(
-            ["title", "translation"]
+        ne_en_ds = self.experiment.en_ne_parallel_corpus_ds.select_columns(["title", "translation"])
+        paraphrase_ds = self.experiment.paraphrase_ds.filter(lambda row: row["label"] == 1).select_columns(
+            ["sentence1", "sentence2"]
         )
-        paraphrase_ds = self.experiment.paraphrase_ds.filter(
-            lambda row: row["label"] == 1
-        ).select_columns(["sentence1", "sentence2"])
 
         triplets_ds = self.experiment.nepali_triplets_ds.select_columns(
             ["sentence", "positive_sentence", "negative_sentence"]
         )
 
-        # both nepali sentences
-        stsb_ne_pair_ds = self.experiment.nepali_stsb_ds.select_columns(
+        stsb_ne_ds = self.experiment.nepali_stsb_ds.select_columns(
             ["sentence1_ne", "sentence2_ne", "score"]
         ).rename_columns({"sentence1_ne": "sentence1", "sentence2_ne": "sentence2"})
 
-        # first english and second nepali
-        stsb_en_ne_pair_ds = self.experiment.nepali_stsb_ds.select_columns(
+        stsb_en_ne_ds = self.experiment.nepali_stsb_ds.select_columns(
             ["sentence1", "sentence2_ne", "score"]
         ).rename_columns({"sentence2_ne": "sentence2"})
 
-        # first nepali and second english
-        stsb_ne_en_pair_ds = self.experiment.nepali_stsb_ds.select_columns(
+        stsb_ne_en_ds = self.experiment.nepali_stsb_ds.select_columns(
             ["sentence1_ne", "sentence2", "score"]
         ).rename_columns({"sentence1_ne": "sentence1"})
 
-        stsb_ds = datasets.DatasetDict(
-            {
-                split: datasets.concatenate_datasets(
-                    [
-                        stsb_ne_pair_ds[split],
-                        stsb_en_ne_pair_ds[split],
-                        stsb_ne_en_pair_ds[split],
-                    ]
-                )
-                for split in ["train", "test", "valid"]
-            }
-        )
+        stsb_en_ds = self.experiment.nepali_stsb_ds.select_columns(["sentence1", "sentence2", "score"])
 
         train_ds = {
-            # "title_excerpt": title_excerpt_ds["train"],
-            # "ne_en": ne_en_ds["train"],
-            # "excerpt_paraphrase": paraphrase_ds["train"],
-            # "nepali_triplets": triplets_ds["train"],
-            "stsb_ne": stsb_ds["train"],
+            "title_excerpt": title_excerpt_ds["train"],
+            "ne_en": ne_en_ds["train"],
+            "excerpt_paraphrase": paraphrase_ds["train"],
+            "nepali_triplets": triplets_ds["train"],
+            "stsb_en": stsb_en_ds["train"],
+            "stsb_ne": stsb_ne_ds["train"],
+            "stsb_en_ne": stsb_en_ne_ds["train"],
+            "stsb_ne_en": stsb_ne_en_ds["train"],
         }
 
         eval_ds = {
-            # "title_excerpt": title_excerpt_ds["test"],
-            # "ne_en": ne_en_ds["test"],
-            # "excerpt_paraphrase": paraphrase_ds["test"],
-            # "nepali_triplets": triplets_ds["test"],
-            "stsb_ne": stsb_ds["test"],
+            "title_excerpt": title_excerpt_ds["test"],
+            "ne_en": ne_en_ds["test"],
+            "excerpt_paraphrase": paraphrase_ds["test"],
+            "nepali_triplets": triplets_ds["test"],
+            "stsb_en": stsb_en_ds["test"],
+            "stsb_ne": stsb_ne_ds["test"],
+            "stsb_en_ne": stsb_en_ne_ds["test"],
+            "stsb_ne_en": stsb_ne_en_ds["test"],
         }
         return train_ds, eval_ds
 
     def get_training_args(self):
         args = super().get_training_args()
-        args.metric_for_best_model = "eval_stsb_ne_loss"
-        args.greater_is_better = False
+        args.metric_for_best_model = "stsb_ne_pearson_cosine"
+        args.greater_is_better = True
         return args
