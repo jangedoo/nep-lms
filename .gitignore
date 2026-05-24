@@ -4,6 +4,8 @@ _notebooks/
 data/
 models/
 experiments/
+trainer_output/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

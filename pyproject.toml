@@ -7,10 +7,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
-torch = [
-    { version = "^2.6", markers = "sys_platform != \"darwin\"", source = "pytorch-cuda" },
-    { version = "^2.6", markers = "sys_platform == \"darwin\"", source = "pytorch-cpu" },
-]
+torch = "^2.6"
 sentence-transformers = "^4.1.0"
 datasets = "^4.0.0"
 transformers = {version = "^4.55.2"}
@@ -35,20 +32,6 @@ jupyter = "^1.1.1"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-# Declare two extras so that Poetry knows when to pull cpu vs. cuda
-[tool.poetry.extras]
-cpu = ["torch"]
-cuda = ["torch"]
-
-[[tool.poetry.source]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-priority = "explicit"
-
-[[tool.poetry.source]]
-name = "pytorch-cuda"
-url = "https://download.pytorch.org/whl/cu126"
-priority = "explicit"
 
 [tool.poetry.scripts]
 nep-lms = "nep_lms.cli:cli"
