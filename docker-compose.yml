@@ -1,0 +1,31 @@
+services:
+  axolotl:
+    image: axolotlai/axolotl-cloud:main-py3.11-cu126-2.7.1
+    container_name: axolotl-finetune
+    restart: unless-stopped
+    ipc: host
+
+    environment:
+      - JUPYTER_PASSWORD=password
+      - HF_TOKEN=${HF_TOKEN:-}
+
+    volumes:
+      # data folder to /workspace/data
+      - ./data:/workspace/data
+      # HuggingFace cache with host
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ./:/workspace/project
+
+    ports:
+      # Jupyter notebook
+      - "8888:8888"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+
