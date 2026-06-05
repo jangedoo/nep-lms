@@ -4,51 +4,55 @@ Run on each machine and compare the logs.
 """
 
 import argparse
-import logging
 import platform
 import time
 
+import psutil
 import torch
 import torch.nn as nn
+from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from rich.table import Table
 from torch.utils.data import DataLoader, Dataset
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(message)s",
-    datefmt="%H:%M:%S",
-    force=True,
-)
-log = logging.getLogger(__name__)
+console = Console()
+
+VOCAB_SIZE = 32000
 
 
 class BenchmarkModel(nn.Module):
-    def __init__(self, vocab_size=32000, d_model=512, nhead=8, num_layers=6, seq_len=256):
+    def __init__(self, d_model=512, nhead=8, num_layers=6):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.embedding = nn.Embedding(VOCAB_SIZE, d_model)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=2048, dropout=0.0, batch_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.head = nn.Linear(d_model, vocab_size)
-        self.seq_len = seq_len
+        self.head = nn.Linear(d_model, VOCAB_SIZE)
 
     def forward(self, x):
-        x = self.embedding(x)
-        x = self.transformer(x)
-        return self.head(x)
+        return self.head(self.transformer(self.embedding(x)))
 
 
 class SyntheticDataset(Dataset):
-    def __init__(self, size=2048, seq_len=256, vocab_size=32000):
-        self.size = size
-        self.data = torch.randint(0, vocab_size, (size, seq_len + 1))
+    def __init__(self, size, seq_len):
+        self.data = torch.randint(0, VOCAB_SIZE, (size, seq_len + 1))
 
     def __len__(self):
-        return self.size
+        return len(self.data)
 
     def __getitem__(self, idx):
         row = self.data[idx]
-        return row[:-1], row[1:]  # input, target (next-token prediction)
+        return row[:-1], row[1:]
 
 
 def get_device():
@@ -63,97 +67,150 @@ def count_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def run_benchmark(steps=200, batch_size=16, seq_len=256, warmup_steps=10):
+def sync(device):
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+
+def get_memory_stats(device):
+    stats = {}
+    if device.type == "cuda":
+        sync(device)
+        stats["GPU allocated"] = f"{torch.cuda.memory_allocated() / 1e9:.2f} GB"
+        stats["GPU reserved"] = f"{torch.cuda.memory_reserved() / 1e9:.2f} GB"
+        stats["GPU peak"] = f"{torch.cuda.max_memory_allocated() / 1e9:.2f} GB"
+    elif device.type == "mps":
+        stats["MPS allocated"] = f"{torch.mps.current_allocated_memory() / 1e9:.2f} GB"
+    stats["RAM"] = f"{psutil.Process().memory_info().rss / 1e9:.2f} GB"
+    return stats
+
+
+def run_benchmark(steps=200, batch_size=16, seq_len=256, warmup_steps=10, fp16=False):
     device = get_device()
 
-    log.info("=" * 60)
-    log.info(f"Host     : {platform.node()}")
-    log.info(f"OS       : {platform.system()} {platform.release()}")
-    log.info(f"PyTorch  : {torch.__version__}")
-    log.info(f"Device   : {device}")
+    gpu_line = ""
     if device.type == "cuda":
-        log.info(f"GPU      : {torch.cuda.get_device_name(0)}")
-        log.info(f"VRAM     : {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-    log.info(f"Batch    : {batch_size}  |  Seq len: {seq_len}  |  Steps: {steps}")
-    log.info("=" * 60)
+        props = torch.cuda.get_device_properties(0)
+        gpu_line = f"\n  GPU     : {torch.cuda.get_device_name(0)} ({props.total_memory / 1e9:.1f} GB)"
 
-    model = BenchmarkModel(seq_len=seq_len).to(device)
-    log.info(f"Parameters: {count_params(model) / 1e6:.2f}M")
+    precision_label = "FP16 (autocast)" if fp16 else "FP32"
+    info = (
+        f"  Host      : [bold]{platform.node()}[/bold]\n"
+        f"  OS        : {platform.system()} {platform.release()}\n"
+        f"  PyTorch   : {torch.__version__}\n"
+        f"  Device    : [bold cyan]{device}[/bold cyan]{gpu_line}\n"
+        f"  Precision : [bold magenta]{precision_label}[/bold magenta]\n"
+        f"  Config    : batch={batch_size}  seq_len={seq_len}  steps={steps}"
+    )
+    console.print(Panel(info, title="[bold white]Training Benchmark[/bold white]", expand=False))
 
-    dataset = SyntheticDataset(size=max(steps, 512) * batch_size, seq_len=seq_len)
+    model = BenchmarkModel(d_model=384).to(device)
+    num_params = count_params(model)
+    console.print(f"  Parameters : [bold]{num_params / 1e6:.2f}M[/bold]")
+
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+
+    dataset = SyntheticDataset(size=max(steps + warmup_steps, 512) * batch_size, seq_len=seq_len)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=(device.type == "cuda"))
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
     criterion = nn.CrossEntropyLoss()
-
     model.train()
-    step = 0
-    total_tokens = 0
-    losses = []
 
-    # ---- warmup ----
-    log.info(f"Warming up for {warmup_steps} steps...")
+    console.print(f"  Warming up [dim]({warmup_steps} steps)[/dim]...")
+    step = 0
     for x, y in loader:
         if step >= warmup_steps:
             break
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
-        out = model(x)
-        loss = criterion(out.view(-1, out.size(-1)), y.view(-1))
+        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
+            loss = criterion(model(x).view(-1, VOCAB_SIZE), y.view(-1))
         loss.backward()
         optimizer.step()
         step += 1
+    sync(device)
 
-    if device.type == "cuda":
-        torch.cuda.synchronize()
+    # Estimated bytes moved per step (FP32 AdamW):
+    # forward: read params (1x)
+    # backward: read params (1x) + write grads (1x)
+    # optimizer: read params+grads+m1+m2 (4x), write params+m1+m2 (3x)
+    # total = 10 passes over param bytes
+    bytes_per_step = num_params * 4 * 10
 
-    # ---- timed run ----
-    log.info("Starting timed benchmark...")
     step = 0
+    total_tokens = 0
+    losses = []
     t_start = time.perf_counter()
 
-    for x, y in loader:
-        if step >= steps:
-            break
-        x, y = x.to(device), y.to(device)
-        optimizer.zero_grad()
-        out = model(x)
-        loss = criterion(out.view(-1, out.size(-1)), y.view(-1))
-        loss.backward()
-        optimizer.step()
+    progress = Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=30),
+        MofNCompleteColumn(),
+        TextColumn("  loss=[white]{task.fields[loss]:.4f}[/white]"),
+        TextColumn("  [green]{task.fields[tok_sec]:>8,.0f}[/green] tok/s"),
+        TextColumn("  [yellow]{task.fields[gbps]:>5.1f}[/yellow] GB/s"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
+    task_id = progress.add_task("Training", total=steps, loss=0.0, tok_sec=0.0, gbps=0.0)
 
-        total_tokens += batch_size * seq_len
-        losses.append(loss.item())
-        step += 1
+    with progress:
+        for x, y in loader:
+            if step >= steps:
+                break
+            x, y = x.to(device), y.to(device)
+            optimizer.zero_grad()
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
+                loss = criterion(model(x).view(-1, VOCAB_SIZE), y.view(-1))
+            loss.backward()
+            optimizer.step()
 
-        if step % 50 == 0:
+            step += 1
+            total_tokens += batch_size * seq_len
+            losses.append(loss.item())
+
             elapsed = time.perf_counter() - t_start
-            tok_per_sec = total_tokens / elapsed
-            log.info(f"  step {step:4d}/{steps} | loss {loss.item():.4f} | {tok_per_sec:,.0f} tokens/sec")
+            progress.update(
+                task_id,
+                advance=1,
+                loss=loss.item(),
+                tok_sec=total_tokens / elapsed,
+                gbps=bytes_per_step * step / elapsed / 1e9,
+            )
 
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-
+    sync(device)
     elapsed = time.perf_counter() - t_start
-    tok_per_sec = total_tokens / elapsed
     avg_loss = sum(losses) / len(losses)
+    tok_sec = total_tokens / elapsed
+    gbps = bytes_per_step * step / elapsed / 1e9
 
-    log.info("=" * 60)
-    log.info(f"RESULTS")
-    log.info(f"  Total time   : {elapsed:.2f}s")
-    log.info(f"  Steps        : {step}")
-    log.info(f"  Avg loss     : {avg_loss:.4f}")
-    log.info(f"  Tokens/sec   : {tok_per_sec:,.0f}")
-    log.info(f"  Samples/sec  : {(step * batch_size) / elapsed:.1f}")
-    log.info("=" * 60)
+    table = Table(box=box.ROUNDED, show_header=False, title="[bold]Results[/bold]", min_width=40)
+    table.add_column("Metric", style="bold dim")
+    table.add_column("Value", justify="right")
+    table.add_row("Precision", f"[bold magenta]{precision_label}[/bold magenta]")
+    table.add_row("Total time", f"{elapsed:.2f} s")
+    table.add_row("Steps", str(step))
+    table.add_row("Avg loss", f"{avg_loss:.4f}")
+    table.add_row("Tokens / sec", f"[bold green]{tok_sec:,.0f}[/bold green]")
+    table.add_row("Samples / sec", f"{(step * batch_size) / elapsed:.1f}")
+    table.add_row("Est. Parameter bandwidth", f"[bold yellow]{gbps:.1f} GB/s[/bold yellow]")
+    for k, v in get_memory_stats(device).items():
+        table.add_row(k, v)
+    console.print(table)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PyTorch training benchmark")
-    parser.add_argument("--steps", type=int, default=200, help="Number of training steps")
-    parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
-    parser.add_argument("--seq-len", type=int, default=256, help="Sequence length")
-    parser.add_argument("--warmup-steps", type=int, default=10, help="Warmup steps (not timed)")
+    parser.add_argument("--steps", type=int, default=200)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--seq-len", type=int, default=256)
+    parser.add_argument("--warmup-steps", type=int, default=10)
+    parser.add_argument("--fp16", action="store_true", help="Enable FP16 mixed-precision via autocast")
     args = parser.parse_args()
 
     run_benchmark(
@@ -161,4 +218,5 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         seq_len=args.seq_len,
         warmup_steps=args.warmup_steps,
+        fp16=args.fp16,
     )
