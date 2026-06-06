@@ -89,13 +89,14 @@ class BaseSTEmbeddingVariant:
             per_device_train_batch_size=16,
             gradient_accumulation_steps=4,
             learning_rate=2e-6,
-            warmup_ratio=0.1,
+            warmup_steps=0.1,
             save_strategy="steps",
             eval_strategy="steps",
             eval_steps=100,
             logging_steps=100,
             save_total_limit=3,
             gradient_checkpointing=True,
+            fp16=self.model.device.type == "cuda",
         )
 
     def get_trainer(
