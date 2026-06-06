@@ -8,7 +8,7 @@ from sentence_transformers import (
     SentenceTransformerTrainer,
     SentenceTransformerTrainingArguments,
 )
-from sentence_transformers.evaluation import SentenceEvaluator
+from sentence_transformers.sentence_transformer.evaluation import SentenceEvaluator
 
 from nep_lms.embeddings.experiment_scopes import BaseEmbeddingExperiment
 

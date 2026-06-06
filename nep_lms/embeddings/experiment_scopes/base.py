@@ -4,7 +4,7 @@ import logging
 import datasets
 import pandas as pd
 from sentence_transformers import SentenceTransformer
-from sentence_transformers.evaluation import SentenceEvaluator
+from sentence_transformers.sentence_transformer.evaluation import SentenceEvaluator
 
 
 class BaseEmbeddingExperiment:

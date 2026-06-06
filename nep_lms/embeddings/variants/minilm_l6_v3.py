@@ -1,7 +1,7 @@
 from typing import Callable
 
 import datasets
-from sentence_transformers import SentenceTransformer, losses
+from sentence_transformers.sentence_transformer import SentenceTransformer, losses
 
 from nep_lms.embeddings.experiment_scopes import GeneralSentenceSimilarityExperiment
 from nep_lms.embeddings.variants.base import BaseSTEmbeddingVariant

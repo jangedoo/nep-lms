@@ -1,4 +1,4 @@
-from sentence_transformers.evaluation import (
+from sentence_transformers.sentence_transformer.evaluation import (
     EmbeddingSimilarityEvaluator,
     SequentialEvaluator,
     TranslationEvaluator,
@@ -13,7 +13,7 @@ from nep_lms.embeddings.dataset_loaders import (
     paraphrase_loader,
     select_max_rows,
 )
-from nep_lms.embeddings.evaluators import create_ir_evaluator_from_parallel_corpus
+from nep_lms.evaluators import create_ir_evaluator_from_parallel_corpus
 from nep_lms.embeddings.experiment_scopes.base import BaseEmbeddingExperiment
 
 
