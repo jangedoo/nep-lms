@@ -1,7 +1,8 @@
 from typing import Callable
 
 import datasets
-from sentence_transformers import SentenceTransformer, losses, training_args
+from sentence_transformers import SentenceTransformer
+from sentence_transformers.sentence_transformer import losses, training_args
 
 from nep_lms.embeddings.dataset_loaders import (
     LEGAL_TRAIN_MAX_ROWS,
@@ -26,9 +27,10 @@ class MiniLML6V3RagVariant(BaseSTEmbeddingVariant):
         return SentenceTransformer("jangedoo/all-MiniLM-L6-v3-nepali")
 
     def _ranking_loss(self, model: SentenceTransformer):
-        return losses.CachedMultipleNegativesSymmetricRankingLoss(
+        return losses.MultipleNegativesRankingLoss(
             model,
-            mini_batch_size=32,
+            directions=("query_to_doc", "doc_to_query"),
+            partition_mode="per_direction",
         )
 
     def get_loss(self, model: SentenceTransformer) -> Callable | dict[str, Callable]:
@@ -89,7 +91,7 @@ class MiniLML6V3RagVariant(BaseSTEmbeddingVariant):
         args.gradient_accumulation_steps = 4
         args.gradient_checkpointing = False
         args.num_train_epochs = 1
-        args.warmup_ratio = 0.05
+        args.warmup_steps = 0.05
         args.eval_steps = 250
         args.save_steps = 250
         args.logging_steps = 50
