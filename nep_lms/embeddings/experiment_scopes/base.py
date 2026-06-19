@@ -13,7 +13,7 @@ class BaseEmbeddingExperiment:
 
     def __init__(self):
         self._datasets: dict[str, datasets.DatasetDict] = {}
-        self._evaluator: SentenceEvaluator = None
+        self._evaluator: SentenceEvaluator = None # type: ignore
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def get_dataset(self, name: str):
@@ -24,7 +24,7 @@ class BaseEmbeddingExperiment:
 
     @abc.abstractmethod
     def _get_evaluator(self, max_rows: int | None = None):
-        pass
+        raise NotImplementedError()
 
     @property
     def evaluator(self) -> SentenceEvaluator:
