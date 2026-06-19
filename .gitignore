@@ -5,6 +5,7 @@ data/
 models/
 experiments/
 trainer_output/
+nep_lms/datasets/nanobeir_ne/output/
 
 
 # Byte-compiled / optimized / DLL files
