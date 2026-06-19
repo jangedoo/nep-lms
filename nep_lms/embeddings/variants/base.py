@@ -1,5 +1,5 @@
 import abc
-from typing import Callable
+from typing import Callable, Generic
 
 import datasets
 import transformers
@@ -11,6 +11,20 @@ from sentence_transformers import (
 from sentence_transformers.sentence_transformer.evaluation import SentenceEvaluator
 
 from nep_lms.embeddings.experiment_scopes import BaseEmbeddingExperiment
+
+def _mixed_precision_kwargs(model):
+    import torch
+
+    if model.device.type != "cuda":
+        return {"fp16": False, "bf16": False, "tf32": False}
+
+    bf16_supported = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+
+    return {
+        "fp16": not bf16_supported,
+        "bf16": bf16_supported,
+        "tf32": bf16_supported,
+    }
 
 
 class BaseSTEmbeddingVariant:
@@ -82,6 +96,9 @@ class BaseSTEmbeddingVariant:
         pass
 
     def get_training_args(self):
+        # dict with keys fp16, bf16
+        mp_kwargs = _mixed_precision_kwargs(self.model)
+
         return SentenceTransformerTrainingArguments(
             output_dir=None,
             num_train_epochs=3,
@@ -96,7 +113,7 @@ class BaseSTEmbeddingVariant:
             logging_steps=100,
             save_total_limit=3,
             gradient_checkpointing=True,
-            fp16=self.model.device.type == "cuda",
+            **mp_kwargs,
         )
 
     def get_trainer(
@@ -122,6 +139,8 @@ class BaseSTEmbeddingVariant:
         epochs: float = 3,
         max_steps: int = -1,
         batch_size: int = 64,
+        eval_steps: float = 0.1,
+        logging_steps: float = 0.1,
         lr: float = 2e-6,
         early_stop=True,
         early_stop_patience=3,
@@ -135,6 +154,8 @@ class BaseSTEmbeddingVariant:
             1, self.effective_batch_size // batch_size
         )
         training_args.learning_rate = lr
+        training_args.eval_steps = eval_steps
+        training_args.logging_steps = logging_steps
 
         if early_stop and training_args.metric_for_best_model is None:
             raise ValueError("metric_for_best_model is required to use early stopping")
