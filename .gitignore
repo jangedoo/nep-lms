@@ -6,7 +6,7 @@ models/
 experiments/
 trainer_output/
 nep_lms/datasets/nanobeir_ne/output/
-
+unsloth_compiled_cache
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
