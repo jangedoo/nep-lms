@@ -1,3 +1,4 @@
+import unsloth
 import abc
 import logging
 
@@ -5,6 +6,8 @@ import datasets
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.sentence_transformer.evaluation import SentenceEvaluator
+from tqdm.auto import tqdm
+import torch
 
 
 class BaseEmbeddingExperiment:
@@ -43,14 +46,29 @@ class BaseEmbeddingExperiment:
 
     def compare(
         self,
-        models: dict[str, SentenceTransformer] | list[tuple[str, SentenceTransformer]],
+        models: dict[str, SentenceTransformer|str] | list[tuple[str, SentenceTransformer]],
     ):
         if isinstance(models, list):
             models = dict(models)
 
         dfs = []
-        for model_name, model in models.items():
-            model_metrics = self.evaluate(model=model)
+        for model_name, model in tqdm(
+            models.items(), desc="Evaluating models", unit="model"
+        ):
+            is_internally_loaded = False
+            if isinstance(model, str):
+                # model_kwargs = {"dtype": torch.bfloat16}
+                # model = SentenceTransformer(model, model_kwargs=model_kwargs)
+                is_internally_loaded = True
+                model = unsloth.FastSentenceTransformer.from_pretrained(model)
+
+            with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+                model_metrics = self.evaluate(model=model)
+
+            if is_internally_loaded:
+                del model
+                torch.cuda.empty_cache()
+
             df = (
                 pd.DataFrame.from_dict(model_metrics, orient="index")
                 .reset_index()
@@ -58,7 +76,9 @@ class BaseEmbeddingExperiment:
             )
             df["model"] = model_name
             dfs.append(df)
-        self.all_model_metrics_df = pd.concat(dfs)
+            # keep updating the metrics_df so that even in case of crashes, we still have the progress
+            self.all_model_metrics_df = pd.concat(dfs)
+
         return self.all_model_metrics_df
 
     def plot_model_comparison(
