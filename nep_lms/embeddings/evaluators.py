@@ -1,5 +1,5 @@
 import datasets
-from sentence_transformers.evaluation import InformationRetrievalEvaluator
+from sentence_transformers.sentence_transformer.evaluation import InformationRetrievalEvaluator
 
 
 def create_ir_evaluator_from_parallel_corpus(
