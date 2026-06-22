@@ -21,6 +21,7 @@ trl = "^0.21.0"
 peft = "^0.18.0"
 einops = "^0.8.1"
 unsloth = "^2026.6.8"
+duckdb = "^1.5.4"
 
 
 [tool.poetry.group.dev.dependencies]
