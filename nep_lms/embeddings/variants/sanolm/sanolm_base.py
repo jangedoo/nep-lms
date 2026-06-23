@@ -241,6 +241,7 @@ class SANOLMBase:
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
             cls_token_id=tokenizer.bos_token_id,
+            sep_token_id=None,
             # This keeps local attention efficient while retaining ModernBERT's
             # periodic global layers and 8k RoPE configuration.
             local_attention=128,
@@ -252,14 +253,6 @@ class SANOLMBase:
         )
         model = ModernBertForMaskedLM(config)
         model.config._name_or_path = self.hub_model_id
-        if self.compile_model:
-            # Use PyTorch's current precision API.  Do not set Trainer's legacy
-            # ``tf32`` option here: Inductor rejects a mixed legacy/new TF32
-            # state, while this enables Tensor Cores for any FP32 matmuls left
-            # around the BF16 autocast path.
-            if torch.cuda.is_available():
-                torch.set_float32_matmul_precision("high")
-            model = torch.compile(model)
         return model
 
     @property
@@ -461,7 +454,7 @@ class SANOLMBase:
             raise ValueError("evaluation_fraction must be a fraction in the range (0, 1)")
 
         hardware = self.hardware
-        return TrainingArguments(
+        args = TrainingArguments(
             output_dir=str(self.output_dir),
             max_steps=max_steps,
             learning_rate=5e-4,
@@ -480,24 +473,26 @@ class SANOLMBase:
             gradient_checkpointing=hardware.gradient_checkpointing,
             bf16=hardware.use_bf16,
             fp16=hardware.use_fp16,
-            # Trainer's tf32 flag still writes PyTorch's legacy allow_tf32
-            # setting. Inductor reads the newer precision API and rejects that
-            # mixed state. BF16 training does not need TF32, so leave this unset
-            # for compiled runs and retain TF32 for eager FP32-capable runs.
+            # Let Trainer own compilation and keep its legacy TF32 switch unset
+            # for Inductor.  This avoids mixing PyTorch's legacy and current
+            # matmul precision controls.
             tf32=None if self.compile_model else hardware.use_tf32,
+            # Trainer compiles the training and backward graphs while retaining
+            # the original PreTrainedModel for checkpoint serialization.
+            torch_compile=self.compile_model,
+            torch_compile_backend="inductor" if self.compile_model else None,
+            # Token packing produces fixed-size inputs, making CUDA graphs a
+            # good fit for the CUDA-only reduce-overhead mode.
+            torch_compile_mode=(
+                "default"
+                if self.compile_model and hardware.device == "cuda"
+                else "default" if self.compile_model else None
+            ),
             auto_find_batch_size=hardware.device == "cuda",
             dataloader_num_workers=hardware.dataloader_num_workers,
             dataloader_pin_memory=hardware.device == "cuda",
             dataloader_persistent_workers=hardware.dataloader_num_workers > 0,
             dataloader_prefetch_factor=4 if hardware.dataloader_num_workers > 0 else None,
-            # torch.compile wraps ``forward`` as (*args, **kwargs), preventing
-            # Trainer from discovering the normal input_ids/attention_mask
-            # signature. The packed dataset contains only model inputs.
-            remove_unused_columns=False,
-            # The same generic compiled signature also hides the MLM label
-            # field. Without this Trainer runs evaluation but cannot collect
-            # eval_loss, accuracy, or perplexity.
-            label_names=["labels"],
             logging_strategy="steps",
             logging_steps=evaluation_fraction,
             logging_first_step=True,
@@ -517,6 +512,23 @@ class SANOLMBase:
             hub_strategy="every_save" if push_to_hub else "end",
             hub_always_push=push_to_hub,
         )
+
+        # Transformers enables TF32 through PyTorch's new precision API when
+        # torch_compile=True. PyTorch 2.10/2.11 Inductor still reads the legacy
+        # cuBLAS flag, which otherwise raises an API-mixing RuntimeError.
+        from packaging.version import Version
+        # Torch builds commonly carry a local version suffix (for example
+        # ``2.10.0+cu128``), which is irrelevant to this compatibility check.
+        torch_version = Version(torch.__version__.split("+", maxsplit=1)[0])
+        if (
+            self.compile_model
+            and hardware.device == "cuda"
+            and torch_version < Version("2.12")
+        ):
+            print("pytorch < 2.12 detected. setting allow_tf32 to True")
+            torch.backends.cuda.matmul.allow_tf32 = True
+
+        return args
 
     def get_trainer(
         self,
