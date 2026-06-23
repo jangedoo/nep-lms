@@ -1,13 +1,13 @@
-import unsloth
 import abc
 import logging
 
 import datasets
 import pandas as pd
+import torch
+import unsloth
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.sentence_transformer.evaluation import SentenceEvaluator
 from tqdm.auto import tqdm
-import torch
 
 
 class BaseEmbeddingExperiment:
@@ -16,7 +16,7 @@ class BaseEmbeddingExperiment:
 
     def __init__(self):
         self._datasets: dict[str, datasets.DatasetDict] = {}
-        self._evaluator: SentenceEvaluator = None # type: ignore
+        self._evaluator: SentenceEvaluator = None  # type: ignore
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def get_dataset(self, name: str):
@@ -46,7 +46,9 @@ class BaseEmbeddingExperiment:
 
     def compare(
         self,
-        models: dict[str, SentenceTransformer|str] | list[tuple[str, SentenceTransformer]],
+        models: (
+            dict[str, SentenceTransformer | str] | list[tuple[str, SentenceTransformer]]
+        ),
     ):
         if isinstance(models, list):
             models = dict(models)
@@ -57,8 +59,6 @@ class BaseEmbeddingExperiment:
         ):
             is_internally_loaded = False
             if isinstance(model, str):
-                # model_kwargs = {"dtype": torch.bfloat16}
-                # model = SentenceTransformer(model, model_kwargs=model_kwargs)
                 is_internally_loaded = True
                 model = unsloth.FastSentenceTransformer.from_pretrained(model)
 
