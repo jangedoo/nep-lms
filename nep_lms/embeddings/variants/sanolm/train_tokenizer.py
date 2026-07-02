@@ -4,6 +4,7 @@ import re
 import datasets
 import tokenizers
 from tokenizers import (
+    AddedToken,
     Tokenizer,
     decoders,
     models,
@@ -154,6 +155,18 @@ hf_tokenizer = PreTrainedTokenizerFast(
     mask_token="<mask>",
 
     model_max_length=512,
+)
+# Consume the preceding space so literal fill-mask prompts match collator masks.
+hf_tokenizer.add_special_tokens(
+    {
+        "mask_token": AddedToken(
+            "<mask>",
+            lstrip=True,
+            rstrip=False,
+            normalized=False,
+            special=True,
+        )
+    }
 )
 hf_tokenizer.push_to_hub("jangedoo/sanolm-tokenizer")
 print("Finished")
