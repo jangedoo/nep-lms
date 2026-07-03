@@ -120,7 +120,9 @@ class HardwareSettings:
         vram_gib = properties.total_memory / 1024**3
         # Reference batches are for this 49M-parameter model at 512 tokens. A
         # 24GB RTX Pro GPU at 1,024 tokens therefore starts at batch 32.
-        if vram_gib >= 20:
+        if vram_gib >= 30:
+            reference_batch_size = 96
+        elif vram_gib >= 20:
             reference_batch_size = 64
         elif vram_gib >= 16:
             reference_batch_size = 48
@@ -573,7 +575,7 @@ class SANOLMBase:
         collator = DataCollatorForLanguageModeling(
             tokenizer=self.tokenizer,
             mlm=True,
-            mlm_probability=0.15,
+            mlm_probability=0.30,
             pad_to_multiple_of=8 if self.hardware.device == "cuda" else None,
         )
         return MLMTrainer(
