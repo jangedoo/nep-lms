@@ -103,7 +103,9 @@ class HardwareSettings:
                 cpu_count=cpu_count,
                 per_device_train_batch_size=batch_size,
                 per_device_eval_batch_size=batch_size,
-                gradient_accumulation_steps=math.ceil(effective_batch_size / batch_size),
+                gradient_accumulation_steps=math.ceil(
+                    effective_batch_size / batch_size
+                ),
                 # A CPU run is the smoke-test path.  Keeping it single-process
                 # makes it reliable in notebooks and constrained containers.
                 dataloader_num_workers=0,
@@ -340,19 +342,32 @@ class SANOLMBase:
         return split["train"], split["test"]
 
     def get_train_eval_text_datasets(
-        self, *, quick_run: bool = False, quick_examples: int = 4_000, eval_examples: int = 20_000
-    ) -> tuple[datasets.Dataset | datasets.IterableDataset, datasets.Dataset | datasets.IterableDataset]:
+        self,
+        *,
+        quick_run: bool = False,
+        quick_examples: int = 4_000,
+        eval_examples: int = 20_000,
+    ) -> tuple[
+        datasets.Dataset | datasets.IterableDataset,
+        datasets.Dataset | datasets.IterableDataset,
+    ]:
         """Build deterministic train/test text datasets before token packing."""
 
         if quick_run:
             return self._quick_text_datasets(quick_examples)
 
         streams = self._full_text_streams()
-        train_streams = [self._split_stream(stream, evaluation=False) for stream in streams]
-        eval_streams = [self._split_stream(stream, evaluation=True) for stream in streams]
+        train_streams = [
+            self._split_stream(stream, evaluation=False) for stream in streams
+        ]
+        eval_streams = [
+            self._split_stream(stream, evaluation=True) for stream in streams
+        ]
         # Preserve the tokenizer's desired language mix.  Reddit's 20% share is
         # split evenly over comments/posts and all three subreddit splits.
-        probabilities = [0.60, 0.20] + [0.20 / len(REDDIT_CONFIGS) / len(REDDIT_SPLITS)] * 6
+        probabilities = [0.60, 0.20] + [
+            0.20 / len(REDDIT_CONFIGS) / len(REDDIT_SPLITS)
+        ] * 6
         train = datasets.interleave_datasets(
             train_streams,
             probabilities=probabilities,
@@ -376,7 +391,9 @@ class SANOLMBase:
         if eos_token_id is None:
             raise ValueError("SANOLM tokenizer must define an EOS token")
 
-        def tokenize_and_pack(batch: dict[str, list[Any]]) -> dict[str, list[list[int]]]:
+        def tokenize_and_pack(
+            batch: dict[str, list[Any]],
+        ) -> dict[str, list[list[int]]]:
             texts = [self._clean_text(text) for text in batch["text"]]
             texts = [text for text in texts if text]
             if not texts:
@@ -411,8 +428,15 @@ class SANOLMBase:
         )
 
     def get_train_eval_datasets(
-        self, *, quick_run: bool = False, quick_examples: int = 4_000, eval_examples: int = 20_000
-    ) -> tuple[datasets.Dataset | datasets.IterableDataset, datasets.Dataset | datasets.IterableDataset]:
+        self,
+        *,
+        quick_run: bool = False,
+        quick_examples: int = 4_000,
+        eval_examples: int = 20_000,
+    ) -> tuple[
+        datasets.Dataset | datasets.IterableDataset,
+        datasets.Dataset | datasets.IterableDataset,
+    ]:
         train, evaluation = self.get_train_eval_text_datasets(
             quick_run=quick_run,
             quick_examples=quick_examples,
@@ -436,7 +460,10 @@ class SANOLMBase:
         if not np.any(active):
             return {"masked_accuracy": 0.0, "masked_tokens": 0.0}
         accuracy = (predicted_ids[active] == labels[active]).mean()
-        return {"masked_accuracy": float(accuracy), "masked_tokens": float(active.sum())}
+        return {
+            "masked_accuracy": float(accuracy),
+            "masked_tokens": float(active.sum()),
+        }
 
     def get_training_args(
         self,
@@ -451,7 +478,9 @@ class SANOLMBase:
             raise ValueError("max_steps must be positive for the streaming full corpus")
 
         if not 0 < evaluation_fraction < 1:
-            raise ValueError("evaluation_fraction must be a fraction in the range (0, 1)")
+            raise ValueError(
+                "evaluation_fraction must be a fraction in the range (0, 1)"
+            )
 
         hardware = self.hardware
         args = TrainingArguments(
@@ -486,13 +515,17 @@ class SANOLMBase:
             torch_compile_mode=(
                 "default"
                 if self.compile_model and hardware.device == "cuda"
-                else "default" if self.compile_model else None
+                else "default"
+                if self.compile_model
+                else None
             ),
             auto_find_batch_size=hardware.device == "cuda",
             dataloader_num_workers=hardware.dataloader_num_workers,
             dataloader_pin_memory=hardware.device == "cuda",
             dataloader_persistent_workers=hardware.dataloader_num_workers > 0,
-            dataloader_prefetch_factor=4 if hardware.dataloader_num_workers > 0 else None,
+            dataloader_prefetch_factor=4
+            if hardware.dataloader_num_workers > 0
+            else None,
             logging_strategy="steps",
             logging_steps=evaluation_fraction,
             logging_first_step=True,
@@ -517,6 +550,7 @@ class SANOLMBase:
         # torch_compile=True. PyTorch 2.10/2.11 Inductor still reads the legacy
         # cuBLAS flag, which otherwise raises an API-mixing RuntimeError.
         from packaging.version import Version
+
         # Torch builds commonly carry a local version suffix (for example
         # ``2.10.0+cu128``), which is irrelevant to this compatibility check.
         torch_version = Version(torch.__version__.split("+", maxsplit=1)[0])
@@ -599,10 +633,12 @@ class SANOLMBase:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Pretrain the SANOLM ModernBERT encoder")
+    parser = argparse.ArgumentParser(
+        description="Pretrain the SANOLM ModernBERT encoder"
+    )
     parser.add_argument("--output-dir", default="trainer_output/sanolm-v1-base")
     parser.add_argument("--max-steps", type=int, default=250_000)
-    parser.add_argument("--eval-fraction", type=float, choices=(0.1, 0.2), default=0.1)
+    parser.add_argument("--eval-fraction", type=float, default=0.1)
     parser.add_argument("--quick-run", action="store_true")
     parser.add_argument("--quick-examples", type=int, default=4_000)
     parser.add_argument("--eval-examples", type=int, default=20_000)
