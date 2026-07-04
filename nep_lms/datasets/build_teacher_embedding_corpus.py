@@ -232,7 +232,7 @@ def build_or_load_corpus(
     total: int = DEFAULT_CORPUS_SIZE,
     loader: CorpusLoader = _default_loader,
     shard_size: int = DEFAULT_CORPUS_SHARD_SIZE,
-) -> tuple[datasets.DatasetDict, dict[str, Any]]:
+) -> tuple[datasets.DatasetDict | datasets.IterableDatasetDict, dict[str, Any]]:
     """Build the deterministic corpus once, or validate and load its cache."""
 
     if total <= 0:
@@ -551,20 +551,24 @@ def extract_teacher_embeddings(
     metadata_path = config_dir / "metadata.json"
     _atomic_json(metadata_path, metadata)
     data_files = {split: paths for split, paths in completed.items() if paths}
+    # Keep the completed Parquet files lazy. A regular load materialises another
+    # Arrow copy of the entire embedding corpus and can require tens of GB.
     embedded_corpus = datasets.load_dataset(
-        "parquet", data_files=data_files, cache_dir=str(config_dir / ".hf-cache")
+        "parquet",
+        data_files=data_files,
+        streaming=True,
+        cache_dir=str(config_dir / ".hf-cache"),
     )
     for split in completed:
         if split not in embedded_corpus:
-            embedded_corpus[split] = datasets.Dataset.from_dict(
-                {name: [] for name in _embedding_features(native_dimension)},
-                features=_embedding_features(native_dimension),
+            embedded_corpus[split] = datasets.IterableDataset.from_generator(
+                lambda: iter(()), features=_embedding_features(native_dimension)
             )
     return embedded_corpus, metadata
 
 
 def push_configuration(
-    dataset: datasets.DatasetDict,
+    dataset: datasets.DatasetDict | datasets.IterableDatasetDict,
     metadata: Mapping[str, Any],
     *,
     repo_id: str = DEFAULT_REPO_ID,
@@ -599,7 +603,7 @@ def build_teacher_configuration(
     trust_remote_code: bool = False,
     push_to_hub: bool = False,
     repo_id: str = DEFAULT_REPO_ID,
-) -> tuple[datasets.DatasetDict, dict[str, Any]]:
+) -> tuple[datasets.DatasetDict | datasets.IterableDatasetDict, dict[str, Any]]:
     total = limit if limit is not None else DEFAULT_CORPUS_SIZE
     corpus, corpus_metadata = build_or_load_corpus(output_dir, total=total)
     result, metadata = extract_teacher_embeddings(
