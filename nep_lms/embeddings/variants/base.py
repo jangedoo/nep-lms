@@ -12,6 +12,7 @@ from sentence_transformers.sentence_transformer.evaluation import SentenceEvalua
 
 from nep_lms.embeddings.experiment_scopes import BaseEmbeddingExperiment
 
+
 def _mixed_precision_kwargs(model):
     import torch
 
@@ -109,10 +110,10 @@ class BaseSTEmbeddingVariant:
             warmup_steps=0.1,
             save_strategy="steps",
             eval_strategy="steps",
-            eval_steps=100,
-            logging_steps=100,
+            eval_steps=0.1,
+            logging_steps=0.1,
             save_total_limit=3,
-            gradient_checkpointing=True,
+            gradient_checkpointing=False,
             **mp_kwargs,
         )
 
