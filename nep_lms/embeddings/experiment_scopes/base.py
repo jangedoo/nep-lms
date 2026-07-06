@@ -4,7 +4,6 @@ import logging
 import datasets
 import pandas as pd
 import torch
-import unsloth
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.sentence_transformer.evaluation import SentenceEvaluator
 from tqdm.auto import tqdm
@@ -60,9 +59,9 @@ class BaseEmbeddingExperiment:
             is_internally_loaded = False
             if isinstance(model, str):
                 is_internally_loaded = True
-                model = unsloth.FastSentenceTransformer.from_pretrained(model)
+                model = SentenceTransformer(model)
 
-            with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+            with torch.inference_mode(), torch.autocast("cuda"):
                 model_metrics = self.evaluate(model=model)
 
             if is_internally_loaded:
