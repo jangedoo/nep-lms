@@ -8,9 +8,9 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
 torch = "^2.10"
-sentence-transformers = { version = "5.5.0", extras = ["train"] }
+sentence-transformers = { version = "5.6.0", extras = ["train"] }
 datasets = "^4.3.0"
-transformers = {version = "^5.0.0"}
+transformers = {version = "^5.13.0"}
 accelerate = "^1.10.0"
 lets-plot = "^4.4.1"
 easyknn = "^0.5.0"
@@ -20,7 +20,6 @@ click = "^8.1.0"
 trl = "^0.21.0"
 peft = "^0.18.0"
 einops = "^0.8.1"
-unsloth = "^2026.6.8"
 duckdb = "^1.5.4"
 
 
@@ -29,6 +28,7 @@ black = "^24.8.0"
 rope = "^1.13.0"
 flake8 = "^7.1.1"
 jupyter = "^1.1.1"
+pytest = "^9.1.1"
 
 [build-system]
 requires = ["poetry-core"]
