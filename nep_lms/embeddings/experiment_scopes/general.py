@@ -8,13 +8,19 @@ from sentence_transformers.sentence_transformer.evaluation import (
 from nep_lms.embeddings.dataset_loaders import (
     en_ne_parallel_corpus_loader,
     nepali_news_loader,
+    nepali_nli_20k_loader,
+    nepali_qa_9k_loader,
+    nepali_query_passage_10k_loader,
     nepali_stsb_loader,
     nepali_triplets_loader,
     paraphrase_loader,
     select_max_rows,
 )
-from nep_lms.evaluators import create_ir_evaluator_from_parallel_corpus
 from nep_lms.embeddings.experiment_scopes.base import BaseEmbeddingExperiment
+from nep_lms.evaluators import (
+    create_ir_evaluator_from_pair_dataset,
+    create_ir_evaluator_from_parallel_corpus,
+)
 
 
 class GeneralSentenceSimilarityExperiment(BaseEmbeddingExperiment):
@@ -25,6 +31,9 @@ class GeneralSentenceSimilarityExperiment(BaseEmbeddingExperiment):
         "paraphrase": paraphrase_loader,
         "nepali_triplets": nepali_triplets_loader,
         "nepali_stsb": nepali_stsb_loader,
+        "nepali_qa_9k": nepali_qa_9k_loader,
+        "nepali_query_passage_10k": nepali_query_passage_10k_loader,
+        "nepali_nli_20k": nepali_nli_20k_loader,
     }
     main_metrics = [
         "translation_mean_accuracy",
@@ -34,6 +43,8 @@ class GeneralSentenceSimilarityExperiment(BaseEmbeddingExperiment):
         "nepali_triplets_cosine_accuracy",
         "stsb_en_pearson_cosine",
         "stsb_ne_pearson_cosine",
+        "nepali_qa_9k_cosine_recall@10",
+        "nepali_query_passage_10k_cosine_recall@10",
     ]
 
     @property
@@ -56,10 +67,22 @@ class GeneralSentenceSimilarityExperiment(BaseEmbeddingExperiment):
     def nepali_stsb_ds(self):
         return self.get_dataset("nepali_stsb")
 
+    @property
+    def nepali_qa_9k(self):
+        return self.get_dataset("nepali_qa_9k")
+
+    @property
+    def nepali_query_passage_10k(self):
+        return self.get_dataset("nepali_query_passage_10k")
+
+    @property
+    def nepali_nli_20k(self):
+        return self.get_dataset("nepali_nli_20k")
+
     def _get_evaluator(self, max_rows: int | None = None):
         evaluators = []
 
-        valid_ds = select_max_rows(self.nepali_news_ds["valid"], max_rows=max_rows)
+        valid_ds = select_max_rows(self.nepali_news_ds["test"], max_rows=max_rows)
         evaluators.append(
             create_ir_evaluator_from_parallel_corpus(
                 ds=valid_ds,
@@ -86,7 +109,7 @@ class GeneralSentenceSimilarityExperiment(BaseEmbeddingExperiment):
         )
 
         valid_ds = select_max_rows(
-            self.en_ne_parallel_corpus_ds["valid"], max_rows=max_rows
+            self.en_ne_parallel_corpus_ds["test"], max_rows=max_rows
         )
         evaluators.append(
             TranslationEvaluator(
@@ -96,7 +119,7 @@ class GeneralSentenceSimilarityExperiment(BaseEmbeddingExperiment):
             )
         )
 
-        valid_ds = select_max_rows(self.nepali_triplets_ds["valid"], max_rows=max_rows)
+        valid_ds = select_max_rows(self.nepali_triplets_ds["test"], max_rows=max_rows)
         evaluators.append(
             TripletEvaluator(
                 anchors=valid_ds["sentence"],
@@ -108,7 +131,7 @@ class GeneralSentenceSimilarityExperiment(BaseEmbeddingExperiment):
             )
         )
 
-        valid_ds = select_max_rows(self.nepali_stsb_ds["valid"], max_rows=max_rows)
+        valid_ds = select_max_rows(self.nepali_stsb_ds["test"], max_rows=max_rows)
         evaluators.append(
             EmbeddingSimilarityEvaluator(
                 sentences1=valid_ds["sentence1"],
@@ -128,4 +151,26 @@ class GeneralSentenceSimilarityExperiment(BaseEmbeddingExperiment):
             )
         )
 
-        return SequentialEvaluator(evaluators)
+        evaluators.append(
+            create_ir_evaluator_from_pair_dataset(
+                select_max_rows(self.nepali_qa_9k["test"], max_rows=max_rows),
+                evaluator_name="nepali_qa_9k",
+                query_col="question",
+                doc_col="answer",
+            )
+        )
+
+        evaluators.append(
+            create_ir_evaluator_from_pair_dataset(
+                select_max_rows(
+                    self.nepali_query_passage_10k["test"], max_rows=max_rows
+                ),
+                evaluator_name="nepali_query_passage_10k",
+                query_col="query",
+                doc_col="positive",
+            )
+        )
+
+        return SequentialEvaluator(
+            evaluators, main_score_function=lambda scores: sum(scores) / len(evaluators)
+        )
